@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 use super::store::DataStore;
@@ -133,9 +133,21 @@ impl LocalDataStore {
         self.data_dir.join("prompts")
     }
 
+    /// Resolve a folder inside the prompts directory, rejecting path traversal
+    fn folder_path(&self, folder: &str) -> Result<PathBuf, String> {
+        validate_folder_name(folder)?;
+        Ok(self.prompts_dir().join(folder))
+    }
+
+    /// Resolve a prompt file inside the prompts directory, rejecting path traversal
+    fn prompt_file_path(&self, folder: &str, filename: &str) -> Result<PathBuf, String> {
+        validate_filename(filename)?;
+        Ok(self.folder_path(folder)?.join(filename))
+    }
+
     /// Read prompt content from file
     fn read_prompt_content(&self, folder: &str, filename: &str) -> Result<String, String> {
-        let file_path = self.prompts_dir().join(folder).join(filename);
+        let file_path = self.prompt_file_path(folder, filename)?;
         if !file_path.exists() {
             return Ok(String::new());
         }
@@ -149,16 +161,16 @@ impl LocalDataStore {
         filename: &str,
         content: &str,
     ) -> Result<(), String> {
-        let folder_path = self.prompts_dir().join(folder);
+        let file_path = self.prompt_file_path(folder, filename)?;
+        let folder_path = self.folder_path(folder)?;
         fs::create_dir_all(&folder_path)
             .map_err(|e| format!("Failed to create folder: {}", e))?;
-        let file_path = folder_path.join(filename);
         fs::write(&file_path, content).map_err(|e| format!("Failed to write prompt file: {}", e))
     }
 
     /// Delete prompt content file
     fn delete_prompt_content(&self, folder: &str, filename: &str) -> Result<(), String> {
-        let file_path = self.prompts_dir().join(folder).join(filename);
+        let file_path = self.prompt_file_path(folder, filename)?;
         if file_path.exists() {
             fs::remove_file(&file_path)
                 .map_err(|e| format!("Failed to delete prompt file: {}", e))?;
@@ -223,10 +235,10 @@ impl LocalDataStore {
         filename: &str,
         content: &str,
     ) -> Result<(), String> {
-        let folder_path = self.prompts_dir().join(folder);
+        let file_path = self.prompt_file_path(folder, filename)?;
+        let folder_path = self.folder_path(folder)?;
         fs::create_dir_all(&folder_path)
             .map_err(|e| format!("Failed to create folder: {}", e))?;
-        let file_path = folder_path.join(filename);
         fs::write(&file_path, content)
             .map_err(|e| format!("Failed to write prompt file: {}", e))
     }
@@ -320,7 +332,7 @@ impl LocalDataStore {
             return Err("Folder already exists".to_string());
         }
 
-        let folder_path = self.prompts_dir().join(&folder_name);
+        let folder_path = self.folder_path(&folder_name)?;
         fs::create_dir_all(&folder_path)
             .map_err(|e| format!("Failed to create folder directory: {}", e))?;
 
@@ -349,8 +361,8 @@ impl LocalDataStore {
             return Err("A folder with that name already exists".to_string());
         }
 
-        let old_path = self.prompts_dir().join(&old_folder);
-        let new_path = self.prompts_dir().join(&new_folder);
+        let old_path = self.folder_path(&old_folder)?;
+        let new_path = self.folder_path(&new_folder)?;
 
         if old_path.exists() {
             fs::rename(&old_path, &new_path)
@@ -386,8 +398,14 @@ impl LocalDataStore {
             return Err("Folder does not exist".to_string());
         }
 
-        let folder_path = self.prompts_dir().join(&folder_name);
+        let folder_path = self.folder_path(&folder_name)?;
         let uncategorized_path = self.prompts_dir().join("uncategorized");
+
+        // Validate every filename before moving anything, so a bad entry can't
+        // leave the folder half-moved
+        for prompt in index.prompts.iter().filter(|p| p.folder == folder_name) {
+            validate_filename(&prompt.filename)?;
+        }
 
         fs::create_dir_all(&uncategorized_path)
             .map_err(|e| format!("Failed to create uncategorized folder: {}", e))?;
@@ -683,7 +701,7 @@ impl DataStore for LocalDataStore {
         }
 
         // Create the folder directory
-        let folder_path = self.prompts_dir().join(&folder_name);
+        let folder_path = self.folder_path(&folder_name)?;
         fs::create_dir_all(&folder_path)
             .map_err(|e| format!("Failed to create folder directory: {}", e))?;
 
@@ -713,8 +731,8 @@ impl DataStore for LocalDataStore {
         }
 
         // Rename the folder directory
-        let old_path = self.prompts_dir().join(&old_folder);
-        let new_path = self.prompts_dir().join(&new_folder);
+        let old_path = self.folder_path(&old_folder)?;
+        let new_path = self.folder_path(&new_folder)?;
 
         if old_path.exists() {
             fs::rename(&old_path, &new_path)
@@ -751,8 +769,14 @@ impl DataStore for LocalDataStore {
             return Err("Folder does not exist".to_string());
         }
 
-        let folder_path = self.prompts_dir().join(&folder_name);
+        let folder_path = self.folder_path(&folder_name)?;
         let uncategorized_path = self.prompts_dir().join("uncategorized");
+
+        // Validate every filename before moving anything, so a bad entry can't
+        // leave the folder half-moved
+        for prompt in index.prompts.iter().filter(|p| p.folder == folder_name) {
+            validate_filename(&prompt.filename)?;
+        }
 
         // Ensure uncategorized folder exists
         fs::create_dir_all(&uncategorized_path)
@@ -890,6 +914,36 @@ fn calculate_recency_tiebreaker(prompt: &PromptMetadata) -> f64 {
     }
 }
 
+/// Validate a folder name taken from the frontend or the cloud.
+///
+/// Must be a non-empty relative path made only of normal components, so it
+/// always resolves inside the prompts directory. Nested folders (`a/b`) are
+/// allowed; `..`, `.`, and absolute paths are not.
+pub fn validate_folder_name(folder: &str) -> Result<(), String> {
+    let path = Path::new(folder);
+    let mut components = path.components().peekable();
+    if components.peek().is_none()
+        || folder.contains('\0')
+        || !components.all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(format!("Invalid folder name: {:?}", folder));
+    }
+    Ok(())
+}
+
+/// Validate a prompt filename taken from the frontend or the cloud.
+///
+/// Must be a single plain path component (no separators, `..`, or `.`).
+pub fn validate_filename(filename: &str) -> Result<(), String> {
+    let mut components = Path::new(filename).components();
+    let is_single_normal = matches!(components.next(), Some(Component::Normal(_)))
+        && components.next().is_none();
+    if !is_single_normal || filename.contains('/') || filename.contains('\0') {
+        return Err(format!("Invalid prompt filename: {:?}", filename));
+    }
+    Ok(())
+}
+
 /// Convert a name to a filename-safe slug
 fn slugify(name: &str) -> String {
     name.to_lowercase()
@@ -923,4 +977,108 @@ fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Isolated store in a unique temp dir (never touches real user data)
+    fn temp_store() -> (LocalDataStore, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("promptlight-test-{}", Uuid::new_v4()));
+        (LocalDataStore::with_data_dir(dir.join("data")), dir)
+    }
+
+    fn prompt(folder: &str, filename: &str) -> Prompt {
+        Prompt {
+            metadata: PromptMetadata {
+                id: String::new(),
+                name: "Test".to_string(),
+                folder: folder.to_string(),
+                description: String::new(),
+                filename: filename.to_string(),
+                use_count: 0,
+                last_used: None,
+                created: String::new(),
+                updated: String::new(),
+                icon: None,
+                color: None,
+            },
+            content: "pwned".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_validate_folder_name() {
+        assert!(validate_folder_name("work").is_ok());
+        assert!(validate_folder_name("work/clients").is_ok());
+        assert!(validate_folder_name("my folder").is_ok());
+        assert!(validate_folder_name("").is_err());
+        assert!(validate_folder_name("..").is_err());
+        assert!(validate_folder_name("../../Library/LaunchAgents").is_err());
+        assert!(validate_folder_name("work/../..").is_err());
+        assert!(validate_folder_name("/etc").is_err());
+        assert!(validate_folder_name(".").is_err());
+    }
+
+    #[test]
+    fn test_validate_filename() {
+        assert!(validate_filename("my-prompt.md").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename("..").is_err());
+        assert!(validate_filename("../x.md").is_err());
+        assert!(validate_filename("a/b.md").is_err());
+        assert!(validate_filename("/Users/x/.zshrc").is_err());
+    }
+
+    #[test]
+    fn test_save_prompt_rejects_traversal_and_writes_nothing() {
+        let (store, root) = temp_store();
+        store.load_index_sync().unwrap(); // seed
+
+        for (folder, filename) in [
+            ("../..", "escape.md"),
+            ("uncategorized", "../../escape.md"),
+            ("/tmp", "escape.md"),
+            ("uncategorized", "/tmp/escape.md"),
+        ] {
+            assert!(store.save_prompt_sync(&prompt(folder, filename)).is_err());
+        }
+
+        assert!(!root.join("escape.md").exists());
+        let index = store.load_index_sync().unwrap();
+        assert!(index.prompts.iter().all(|p| p.filename != "escape.md"));
+        assert!(index.folders.iter().all(|f| f != "../.." && f != "/tmp"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_save_prompt_valid_path_still_works() {
+        let (store, root) = temp_store();
+        let saved = store.save_prompt_sync(&prompt("work", "ok.md")).unwrap();
+        assert!(store.prompts_dir().join("work/ok.md").exists());
+        assert_eq!(store.get_prompt_sync(&saved.id).unwrap().content, "pwned");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_folder_ops_reject_traversal() {
+        let (store, root) = temp_store();
+        store.load_index_sync().unwrap();
+
+        assert!(store.add_folder_sync("../outside").is_err());
+        assert!(!root.join("outside").exists());
+
+        // A poisoned index entry must not let delete_folder remove_dir_all outside
+        let sentinel = root.join("keep");
+        fs::create_dir_all(&sentinel).unwrap();
+        let mut index = store.load_index_sync().unwrap();
+        index.folders.push("../../keep".to_string());
+        store.save_index_sync(&index).unwrap();
+
+        assert!(store.delete_folder_sync("../../keep").is_err());
+        assert!(store.rename_folder_sync("../../keep", "x").is_err());
+        assert!(sentinel.exists());
+        fs::remove_dir_all(&root).ok();
+    }
 }

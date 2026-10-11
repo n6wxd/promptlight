@@ -1,5 +1,6 @@
 use tauri::State;
 
+use super::local::validate_filename;
 use super::store::DataStore;
 use super::sync::SyncServiceState;
 use super::{Prompt, PromptIndex, PromptMetadata, SearchResult};
@@ -107,6 +108,8 @@ pub async fn set_sync_auth(
     user_id: String,
     id_token: String,
 ) -> Result<(), String> {
+    // user_id becomes a directory name under ~/.prompt-launcher/users/
+    validate_filename(&user_id).map_err(|_| format!("Invalid user id: {:?}", user_id))?;
     sync.set_auth(&user_id, &id_token);
 
     // Auto-sync from cloud after sign-in (cloud is source of truth)

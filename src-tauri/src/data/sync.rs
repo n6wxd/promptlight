@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 
 use super::firestore::{FirestoreClient, UserMeta};
-use super::local::LocalDataStore;
+use super::local::{validate_filename, validate_folder_name, LocalDataStore};
 use super::store::DataStore;
 use super::{Prompt, PromptIndex, PromptMetadata, SearchResult};
 
@@ -201,7 +201,24 @@ impl SyncService {
         };
 
         // Download from Firestore (outside the lock)
-        let (index, prompts) = firestore.download_all(&user_id, &id_token).await?;
+        let (mut index, mut prompts) = firestore.download_all(&user_id, &id_token).await?;
+
+        // SECURITY: Cloud data is untrusted input. Drop any prompt whose folder or
+        // filename would resolve outside the prompts directory before touching disk.
+        let is_safe = |m: &PromptMetadata| {
+            validate_folder_name(&m.folder).is_ok() && validate_filename(&m.filename).is_ok()
+        };
+        index.prompts.retain(|m| {
+            let safe = is_safe(m);
+            if !safe {
+                eprintln!(
+                    "[SYNC SECURITY] Skipping cloud prompt {} with unsafe path {:?}/{:?}",
+                    m.id, m.folder, m.filename
+                );
+            }
+            safe
+        });
+        prompts.retain(|p| is_safe(&p.metadata));
 
         // SAFETY: Don't replace existing local data with empty cloud data
         // This prevents accidental data loss when cloud is empty or auth fails silently
@@ -288,6 +305,8 @@ impl LocalDataStore {
 
     /// Read prompt content synchronously
     fn read_prompt_content_sync(&self, folder: &str, filename: &str) -> Result<String, String> {
+        validate_folder_name(folder)?;
+        validate_filename(filename)?;
         let file_path = self.data_dir().join("prompts").join(folder).join(filename);
         if !file_path.exists() {
             return Ok(String::new());
