@@ -45,10 +45,7 @@ pub async fn sign_in_with_google_token(
 ) -> Result<AuthSession, String> {
     let client = reqwest::Client::new();
 
-    let url = format!(
-        "{}/accounts:signInWithIdp?key={}",
-        FIREBASE_AUTH_URL, api_key
-    );
+    let url = format!("{}/accounts:signInWithIdp", FIREBASE_AUTH_URL);
 
     // Build the post_body for Google provider
     let post_body = format!(
@@ -65,6 +62,7 @@ pub async fn sign_in_with_google_token(
 
     let response = client
         .post(&url)
+        .query(&[("key", api_key)])
         .json(&request)
         .send()
         .await
@@ -106,7 +104,7 @@ pub async fn sign_in_with_google_token(
 pub async fn refresh_token(api_key: &str, refresh_token: &str) -> Result<AuthSession, String> {
     let client = reqwest::Client::new();
 
-    let url = format!("{}?key={}", FIREBASE_TOKEN_URL, api_key);
+    let url = FIREBASE_TOKEN_URL;
 
     let params = [
         ("grant_type", "refresh_token"),
@@ -114,7 +112,8 @@ pub async fn refresh_token(api_key: &str, refresh_token: &str) -> Result<AuthSes
     ];
 
     let response = client
-        .post(&url)
+        .post(url)
+        .query(&[("key", api_key)])
         .form(&params)
         .send()
         .await
@@ -170,10 +169,7 @@ struct UserInfo {
 async fn get_user_info(api_key: &str, id_token: &str) -> Result<User, String> {
     let client = reqwest::Client::new();
 
-    let url = format!(
-        "{}/accounts:lookup?key={}",
-        FIREBASE_AUTH_URL, api_key
-    );
+    let url = format!("{}/accounts:lookup", FIREBASE_AUTH_URL);
 
     let body = serde_json::json!({
         "idToken": id_token
@@ -181,6 +177,7 @@ async fn get_user_info(api_key: &str, id_token: &str) -> Result<User, String> {
 
     let response = client
         .post(&url)
+        .query(&[("key", api_key)])
         .json(&body)
         .send()
         .await
