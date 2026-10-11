@@ -28,7 +28,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'none'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'none'; connect-src 'self' ipc: http://ipc.localhost https://api.github.com ws://localhost:* http://localhost:*"
     }
   },
   "bundle": {
