@@ -38,6 +38,15 @@ pub struct AuthSession {
     pub tokens: AuthTokens,
 }
 
+impl AuthSession {
+    /// Copy of the session safe to hand to the webview.
+    /// The refresh token stays in the backend; the frontend only needs the ID token.
+    fn for_frontend(mut self) -> Self {
+        self.tokens.refresh_token = String::new();
+        self
+    }
+}
+
 // ==================== Tauri Commands ====================
 
 /// Start the Google sign-in flow
@@ -59,7 +68,7 @@ pub async fn sign_in_with_google(
     // Store tokens securely
     storage::save_auth_session(&session)?;
 
-    Ok(session)
+    Ok(session.for_frontend())
 }
 
 /// Get the current auth state (cached or refreshed)
@@ -73,7 +82,7 @@ pub async fn get_current_auth(api_key: String) -> Result<Option<AuthSession>, St
                 match firebase::refresh_token(&api_key, &session.tokens.refresh_token).await {
                     Ok(new_session) => {
                         storage::save_auth_session(&new_session)?;
-                        Ok(Some(new_session))
+                        Ok(Some(new_session.for_frontend()))
                     }
                     Err(_) => {
                         // Refresh failed, clear auth and return None
@@ -82,7 +91,7 @@ pub async fn get_current_auth(api_key: String) -> Result<Option<AuthSession>, St
                     }
                 }
             } else {
-                Ok(Some(session))
+                Ok(Some(session.for_frontend()))
             }
         }
         None => Ok(None),
