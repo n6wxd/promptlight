@@ -2,12 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Allow accessibility features (keyboard simulation) -->
-    <key>com.apple.security.automation.apple-events</key>
-    <true/>
-    <!-- Disable hardened runtime restrictions that block CGEvent -->
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
+    <!-- Keyboard simulation (CGEvent) needs the Accessibility (TCC) permission,
+         not entitlements. Apple Events and unsigned executable memory were
+         removed: the app uses no AppleScript, and WebKit JIT runs out of process. -->
+    <!-- Kept for now: self-signed "PromptLight Dev" cert has no Team ID; verify a
+         signed build launches without this before removing it. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 </dict>
